@@ -1,0 +1,3 @@
+[submodule "dependencies/js-vector"]
+	path = dependencies/js-vector
+	url = https://github.com/tronkko/js-vector.git
