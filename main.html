@@ -2,12 +2,13 @@
 	<head>
 		<title> Gymansiearbetet </title>
 		<script src="main.js"></script>
+		<script src="dependencies/math.js"></script>
 	</head>
 
 	<body onload="loaded()">
 		
-		<h1>  </h1>
-		<canvas id="mainCanvas" style="border:red solid 1px"></canvas> <br>
+		<canvas id="mainCanvas" style="border:red solid 1px; display: inline-block"></canvas><table id="sumTable" style="display: inline-block; margin-left:2%"></table><br>
+		<h2 id="solvable"> Undecided </h2>
 		<button onClick="document.generatePointCount = Math.max(3,parseInt(document.getElementById('numPoints').value) || 0);generatePoints()"> Generate Points </button>
 		<input id="numPoints" value=10></input> <br>
 		<button onClick="shufflePoints()"> Shuffle </button>
