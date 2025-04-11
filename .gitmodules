@@ -1,3 +1,6 @@
 [submodule "dependencies/js-vector"]
 	path = dependencies/js-vector
 	url = https://github.com/tronkko/js-vector.git
+[submodule "dependencies/Tiger"]
+	path = dependencies/Tiger
+	url = https://github.com/hosseinmoein/Tiger.git
