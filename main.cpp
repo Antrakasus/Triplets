@@ -5,14 +5,16 @@
 #include <ctime>
 #include <cstdint>
 #include <stdexcept>
+#include <chrono>
 //#include <utility>
 
+#include "atan2.hpp"
 #include <Tiger/Matrix.h>
 
 #define IMAX UINTMAX_MAX
-#define PI 3.1415
 typedef uintmax_t I;
-typedef long double F;
+typedef double F;
+constexpr F PI = 3.14159265359;
 
 typedef hmma::Matrix<hmma::DenseMatrixBase, F> Matrix;
 
@@ -37,7 +39,7 @@ struct point{
 	{}
 
 	F distance(point p){
-		return std::pow(p.x-x,2)+std::pow(p.y-y,2);
+		return std::sqrt(std::pow(p.x-x,2)+std::pow(p.y-y,2));
 	}
 };
 
@@ -49,12 +51,23 @@ class triplet_app{
 	enum solution_code{
 		SOLVED,
 		TRIVIAL,
-		INVALID,
-		NOT_SEPARATE
+		INVALID
 	};
 
 
 	public:
+
+	void report(uint64_t report_flag){
+		if(report_flag & 0b1){
+			std::cout << "Error:" << get_error() << "\n";
+		}
+		if(report_flag & 0b10){
+			output_points();
+		}
+		if(report_flag & 0b100){
+			output_configuration();
+		}
+	}
 	
 	triplet_app(I n, uint64_t flag){
 		n_points = n;
@@ -106,9 +119,10 @@ class triplet_app{
 	}
 
 	void randomize_points(){
+		F scalar = (F)1 / RAND_MAX;
 		for(I i=0; i<n_points; i++){
-			points[i].x = 1e-9 * (rand() % 1000000000);
-			points[i].y = 1e-9 * (rand() % 1000000000);
+			points[i].x = scalar * (F) rand();
+			points[i].y = scalar * (F) rand();
 		}
 	}
 
@@ -170,14 +184,29 @@ class triplet_app{
 
 	void solve_buchberger(){}
 
+	F get_error(){
+		F error = 0;
+
+		for(I x = 0; x<n_points; x++){
+			// Could cache p1 and p2 or distances, but it would probably not affect performance much at all 
+			point p = points[x];
+				error  += std::abs(p.distance(points[p.p1]) - p.distance(points[p.p2])) 
+						+ std::abs(p.distance(points[p.p1]) - points[p.p1].distance(points[p.p2]))
+					    + std::abs(p.distance(points[p.p2]) - points[p.p1].distance(points[p.p2]));
+		}
+		return error;
+	}
 
 	void solve_greedy_walk(F step_factor, F step_length, I iters){
 
 	}
 
-	void solve_naive_walk(F step_factor, F step_length, I iters){
+	I solve_naive_walk(F step_factor, F step_length, I iters, F epsilon){
+		static F* new_values;
 		const F pt = PI/3;
-		F* new_values = (F*)malloc(sizeof(F)*n_points*2);
+		if (new_values == nullptr){
+			new_values= (F*)malloc(sizeof(F)*n_points*2);
+		}
 		F max_dev;
 		for(I i=0; i<iters; i++){
 			max_dev=0;
@@ -188,61 +217,57 @@ class triplet_app{
 				max_dev = std::max(max_dev, std::max(std::abs(p.x), std::abs(p.y)));
 
 				F distance = p1.distance(p2);
-				F angle = std::atan2(p2.y-p1.y,p2.x-p1.x);
-
-				F c1 = std::cos(angle-pt);
-				F c2 = std::cos(angle+pt);
-				F s1 = std::sin(angle-pt);
-				F s2 = std::sin(angle+pt);
-
-				point o11(p1.x + distance * c1, p1.y + distance * s1);
-				point o22(p1.x + distance * c2, p1.y + distance * s2);
-
-				F o1[] = {p1.x + distance * c1, p1.y + distance * s1};
-				F o2[] = {p1.x + distance * c2, p1.y + distance * s2};
-
-				F d1 = std::pow(p.x-o1[0],2)+std::pow(p.y-o1[1],2.0);
-				F d2 = std::pow(p.x-o2[0],2)+std::pow(p.y-o2[1],2.0);
-				d1 = p.distance(o11);
-				d2 = p.distance(o22);
-				//std::cout << p.x << " "<< p.y << " " << o1[0] << " "<< o1[1] << " " << o2[0] << " " << o2[1]<< "\n";
-				if( d1 < d2 ){
-					F fac = std::min(step_factor,step_length/d1);
-					new_values[n*2] = p.x + (o11.x-p.x) * fac;
-					new_values[n*2+1] = p.y + (o11.y-p.y) * fac;
+				F angle = fast_atan2(p2.y-p1.y,p2.x-p1.x);
+				#if true
+				bool c = fast_atan2(p.y-p1.y , p.x-p1.x) < angle;
+				F offset = c ? -pt : pt;
+				F x = p1.x + distance *std::cos(angle+offset);
+				F y = p1.y + distance *std::sin(angle+offset);
+				F d = std::sqrt(std::pow(p.x-x,2)+std::pow(p.y-y,2));
+				F fac = std::min(step_factor,step_length/(d));
+				new_values[n*2] = p.x + (x-p.x) * fac;
+				new_values[n*2+1] = p.y + (y-p.y) * fac;
+				
+				#else
+				F x1 = p1.x + distance *std::cos(angle+pt);
+				F x2 = p1.x + distance *std::cos(angle-pt);
+				F y1 = p1.y + distance *std::sin(angle+pt);
+				F y2 = p1.y + distance *std::sin(angle-pt);
+				F d1 = std::pow(p.x-x1,2)+std::pow(p.y-y1,2);
+				F d2 = std::pow(p.x-x2,2)+std::pow(p.y-y2,2);
+				if( d1 < d2 ){ // Branchless with 3 ternaries did not seem to be faster
+					F fac = std::min(step_factor,step_length/std::sqrt(d1));
+					new_values[n*2] = p.x + (x1-p.x) * fac;
+					new_values[n*2+1] = p.y + (y1-p.y) * fac;
+					//if(bool c = std::sin(std::atan2(p.y-p1.y, p.x-p1.x)-angle) < 0) std::cout << "Disagrees\n";
 				}else{
-					F fac = std::min(step_factor,step_length/d2);
-					new_values[n*2] = p.x + (o22.x-p.x) * fac;
-					new_values[n*2+1] = p.y + (o22.y-p.y) * fac;
+					F fac = std::min(step_factor,step_length/std::sqrt(d2));
+					new_values[n*2] = p.x + (x2-p.x) * fac;
+					new_values[n*2+1] = p.y + (y2-p.y) * fac;
 				}
+				#endif
 
 			}
 			for(I n=0; n<n_points; n++){
 				points[n].x = new_values[n*2]/max_dev;
 				points[n].y = new_values[n*2+1]/max_dev;
 			}
-
-			F error = 0;
-
-			for(I x = 0; x<n_points; x++){
-				// Could cache p1 and p2 or distances, but it would probably not affect performance much at all 
-				point p = points[x];
-				error  += std::abs(p.distance(points[p.p1]) - p.distance(points[p.p2])) 
-					+ std::abs(p.distance(points[p.p1]) - points[p.p1].distance(points[p.p2]));
-					+ std::abs(p.distance(points[p.p2]) - points[p.p1].distance(points[p.p2]));
-			}
 			
 			for(I n1=0; n1<n_points; n1++){
 				for(I n2=0; n2<n_points; n2++){
 					if(n1!=n2 && points[n1].distance(points[n2]) < 0.001){
-						points[n1].x = 1e-9 * (rand() % 1000000000);
-						points[n1].y = 1e-9 * (rand() % 1000000000);
+						const F scalar = (F)1 / RAND_MAX;
+						points[n1].x = scalar * (F) rand();
+						points[n1].y = scalar * (F) rand();
 					}
 				}
 			}
+			if( get_error() < epsilon) return i;
 
-			std::cout << "Iteration " << i+1 << " Error: " << error << "\n";
+			//std::cout << "Iteration " << i+1 << " Error: " << error << "\n";
 		}	
+		//free(new_values);
+		return iters;
 	} 
 
 
@@ -259,10 +284,8 @@ class triplet_app{
 		}
 	}
 
-	solution_code query_solved(F epsilon){
+	solution_code check_error(F epsilon){
 		point p;
-		bool all_zero = true;
-		bool separate = true;
 		for(I i=0; i<n_points; i++){
 		 	p = points[i];
 			if (std::abs( p.distance(points[p.p1]) - p.distance(points[p.p2])) 
@@ -270,54 +293,116 @@ class triplet_app{
 			 +  std::abs( p.distance(points[p.p2]) - points[p.p1].distance(points[p.p2])) > epsilon) 
 			return INVALID;
 			
-			if(std::abs(p.x)  + std::abs(p.y) > epsilon) all_zero = false;
 			for(I n=0; n<n_points; n++){
 				if(points[n].distance(points[i])<epsilon && n!=i){
-					separate = false;
-					break;
+					return TRIVIAL;
 				}
 			}
-		}
-		if(all_zero){
-			return TRIVIAL;
-		}
-		if(!separate){
-			return NOT_SEPARATE;
 		}
 		return SOLVED;
 	}
 
+	bool is_solved(){
+		return check_error(0.001) == SOLVED;
+	}
+
 	std::string query_solved_string(){
-		switch(query_solved(0.01)){
+
+		switch(check_error(0.01)){
 		case INVALID:	return "Invalid solution";
 		case TRIVIAL:	return "Trivial solution";
 		case SOLVED:	return "Successfully solved!";
-		case NOT_SEPARATE:  return "Points not separate!";
 		}
 		return "Bullshit";
 	};
+
+	void run_perf_test(I n_tests, I depth, I steps){
+		std::chrono::system_clock::time_point start, stop;
+		I successes = 0;
+		I solve = 0;
+		start = std::chrono::high_resolution_clock::now();
+		for(I x=0; x<n_tests; x++){
+			generate_points();
+			for(I y=0; y<depth; y++){
+				randomize_points();
+				solve_naive_walk(0.33, 0.50, steps, 0.001); // For n=3,  step factor of 1/3 is optimal according to testing, step length seems to be whatever
+															// For n=4,  step factor of 0.40-0.60 and step length 0.5-1.0
+															// For n=5,  step factor of 0.40-0.60 and step length 0.4-1.0
+															// For n=6,  step factor of 0.30-0.60 and step length 0.2-1.0
+															// For n=7,  step factor of 0.30-0.60 and step length 0.4-1.0
+															// For n=8,  step factor of 0.40-0.60 and step length 0.3-1.0
+															// For n=9,  step factor of 0.35-0.65 and step length 0.1-0.9
+															// For n=10, step factor of 0.35-0.55 and step length 0.2-0.8
+															// For n=11, step factor of 0.20-0.60 and step length 0.2-0.65
+															// For n=12, step factor of 0.35-0.50 and step length 0.35-0.85
+				successes += is_solved();
+			}
+		}
+		stop = std::chrono::high_resolution_clock::now();
+		solve += std::chrono::duration_cast<std::chrono::nanoseconds>(stop-start).count();
+
+		std::cout << "Solved " << successes << "/" << n_tests*depth << " : " << (float) successes / (float) n_tests / (float) depth << "\n";
+		std::cout << "Took " << (F)solve / 1E9 << " seconds in total" << "\n";
+		std::cout << "Each step took an average of "<< (F)solve / (F)(n_tests*depth*steps) << " ns\n";
+	}
+
+	void run_parameter_test(I depth, F fac_scale, F max_scale, F epsilon){
+		const I threshold = 100;
+		I iters;
+		
+		F min_fac;
+		F min_scale;
+		I min_iters=threshold*depth;
+		I max_succeses = 0;
+		for(F x=fac_scale; x<1; x+=fac_scale){
+			for(F y=max_scale; y<1; y+=max_scale){
+				I successes = 0;
+				I total=0;
+				for(I i=0; i<depth; i++){
+					generate_points();
+					randomize_points();
+					iters = solve_naive_walk(x, y, threshold, 0.001);
+					successes += is_solved();
+					total += is_solved() ? iters : 0;
+				}
+				std::cout << successes << "\n";
+				if(successes > max_succeses || (successes==depth && total < min_iters)){
+					min_iters=total;
+					min_fac = x;
+					min_scale = y;
+					max_succeses = successes;
+				}
+				//std::cout << "Factor "<< x << " & length " << y << " yielded an average of " << (F) total / (F) successes 
+				//	<< " iterations over " << successes << " successes out of " << depth << " total tests\n"; 
+			}
+		}
+		std::cout << "Optimal factor and length found was " << min_fac << ", " << min_scale << "\n";
+	}
 };
+
+
 
 int main(int arg_count, char *arg_vector[]){
 	srand(time(NULL));
-	if(arg_count < 4){
-		std::cout << "Unknown syntax, use syntax: triplets iterations n_points report_flag \n";
+	if(arg_count < 6){
+		std::cout << "Unknown syntax, use syntax: triplets n_points max_steps n_tests test_tries report_flag \n";
 		return 0;
 	}
-	I iters = std::stoi(arg_vector[1]);
-	I n = std::stoi(arg_vector[2]);
-	uint64_t report_flag = std::stoi(arg_vector[3]);
+	I n_points = std::stoi(arg_vector[1]);
+	I steps = std::stoi(arg_vector[2]);
+	I n_tests = std::stoi(arg_vector[3]);
+	I test_depth = std::stoi(arg_vector[4]);
+	uint64_t report_flag = std::stoi(arg_vector[5]);
 
-	triplet_app app (n, report_flag);
+	triplet_app app (n_points, report_flag);
 	app.generate_points();
+	I successes = 0;
 	app.randomize_points();
-	app.solve_naive_walk(0.20, 0.20, iters);
-	std::cout << app.query_solved_string() << "\n";
-	if(report_flag & 0b1){
-		app.output_points();
-	}
-	if(report_flag & 0b10){
-		app.output_configuration();
-	}
+	//app.run_perf_test(n_tests, test_depth, steps);
+
+	app.run_parameter_test(test_depth, 0.05, 0.05, 0.01);
+	
+
+	
 	return 0;
 }
