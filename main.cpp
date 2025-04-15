@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <chrono>
+#include <algorithm>
 //#include <utility>
 
 #include "atan2.hpp"
@@ -197,8 +198,83 @@ class triplet_app{
 		return error;
 	}
 
-	void solve_greedy_walk(F step_factor, F step_length, I iters){
+	I solve_degree_walk(F step_factor, F step_length, I iters, I degree, F epsilon){
+		static F *new_values, *old_values;
+		const F pt = PI/3;
+		if (new_values == nullptr){
+			new_values= (F*)malloc(sizeof(F)*n_points*2);
+		}
+		if(old_values == nullptr){
+			old_values= (F*)malloc(sizeof(F)*n_points*2*degree);
+		}else{
+			old_values= (F*)realloc(old_values,sizeof(F)*n_points*2*degree);
+		}
 
+		for(I i=0; i<degree; i++){
+			for(I n=0; n<n_points; n++){
+				old_values[i*n_points*2]=0;
+				old_values[i*n_points*2+1]=0;
+			}
+		}
+
+		F max_dev;
+		for(I i=0; i<iters; i++){
+			max_dev=0;
+			for(I n=0; n<n_points; n++){
+				point p = points[n];
+				point p1 = points[p.p1];
+				I p1x = p1.x;
+				I p1y = p1.y;
+				point p2 = points[p.p2];
+				I p2x = p2.x;
+				I p2y = p2.y;
+				max_dev = std::max(max_dev, std::max(std::abs(p.x), std::abs(p.y)));
+
+				for(I d=0; d<degree; d++){
+					//TODO
+				}
+
+				F distance = std::sqrt(std::pow(p1x-p2x,2)+std::pow(p1y-p2y,2));
+				F angle = fast_atan2(p2y-p1y,p2x-p1x);
+				
+				bool c = fast_atan2(p.y-p1y , p.x-p1x) < angle;
+				F offset = c ? -pt : pt;
+				F x = p1x + distance *std::cos(angle+offset);
+				F y = p1y + distance *std::sin(angle+offset);
+				F d = std::sqrt(std::pow(p.x-x,2)+std::pow(p.y-y,2));
+				F fac = std::min(step_factor,step_length/(d));
+				new_values[n*2] = p.x + (x-p.x) * fac;
+				new_values[n*2+1] = p.y + (y-p.y) * fac;
+
+			}
+
+			for(I x=0; x<degree-1; x++){
+				for(I n=0; n<n_points; n++){
+					old_values[x*n_points*2+n*2] = old_values[(x+1)*n_points*2+n*2];
+					old_values[x*n_points*2+n*2+1] = old_values[(x+1)*n_points*2+n*2+1];
+				}
+			}
+			for(I n=0; n<n_points; n++){
+				old_values[(degree-1)*n_points*2+n*2] = points[n].x;
+				old_values[(degree-1)*n_points*2+n*2+1] = points[n].y;
+
+				points[n].x = new_values[n*2]/max_dev;
+				points[n].y = new_values[n*2+1]/max_dev;
+			}
+			
+			for(I n1=0; n1<n_points; n1++){
+				for(I n2=0; n2<n_points; n2++){
+					if(n1!=n2 && points[n1].distance(points[n2]) < 0.001){
+						const F scalar = (F)1 / RAND_MAX;
+						points[n1].x = scalar * (F) rand();
+						points[n1].y = scalar * (F) rand();
+					}
+				}
+			}
+			if( get_error() < epsilon) return i;
+			
+		}	
+		return iters;
 	}
 
 	I solve_naive_walk(F step_factor, F step_length, I iters, F epsilon){
@@ -322,10 +398,11 @@ class triplet_app{
 		I solve = 0;
 		start = std::chrono::high_resolution_clock::now();
 		for(I x=0; x<n_tests; x++){
+			std::cout << "\r" << x <<"/" << n_tests;
 			generate_points();
 			for(I y=0; y<depth; y++){
 				randomize_points();
-				solve_naive_walk(0.33, 0.50, steps, 0.001); // For n=3,  step factor of 1/3 is optimal according to testing, step length seems to be whatever
+				solve_naive_walk(0.5, 0.70, steps, 0.001); // For n=3,  step factor of 1/3 is optimal according to testing, step length seems to be whatever
 															// For n=4,  step factor of 0.40-0.60 and step length 0.5-1.0
 															// For n=5,  step factor of 0.40-0.60 and step length 0.4-1.0
 															// For n=6,  step factor of 0.30-0.60 and step length 0.2-1.0
@@ -335,15 +412,46 @@ class triplet_app{
 															// For n=10, step factor of 0.35-0.55 and step length 0.2-0.8
 															// For n=11, step factor of 0.20-0.60 and step length 0.2-0.65
 															// For n=12, step factor of 0.35-0.50 and step length 0.35-0.85
-				successes += is_solved();
+				if(is_solved()){
+					successes++;
+					break;
+				}
 			}
 		}
+		std::cout << "\n";
 		stop = std::chrono::high_resolution_clock::now();
 		solve += std::chrono::duration_cast<std::chrono::nanoseconds>(stop-start).count();
 
-		std::cout << "Solved " << successes << "/" << n_tests*depth << " : " << (float) successes / (float) n_tests / (float) depth << "\n";
+		std::cout << "Solved " << successes << "/" << n_tests << " : " << (float) successes / (float) n_tests << "\n";
 		std::cout << "Took " << (F)solve / 1E9 << " seconds in total" << "\n";
 		std::cout << "Each step took an average of "<< (F)solve / (F)(n_tests*depth*steps) << " ns\n";
+	}
+
+	void run_parameter_test_2(I depth, I n_tests, I steps){
+		std::vector<I> iters(depth);
+		I iter;
+		std::cout << "\n";
+		for(I x=0; x<n_tests; x++){
+			std::cout << "\r" << x <<"/" << n_tests;
+			generate_points();
+			for(I y=0; y<depth; y++){
+				randomize_points();
+				iter = solve_naive_walk(0.5,0.5,steps,0.0001);
+				if(is_solved()){
+					//std::cout << iter << "\n";
+					iters.push_back(iter);
+					break;
+				}
+			}
+		}
+		std::cout << "\n";
+		std::sort(iters.begin(), iters.end());
+		std::cout << iters.at((I)((F)iters.size()*0.99)) << " " << iters.at((I)((F)iters.size()*0.90)) << " " << iters.at((I)((F)iters.size()*0.80)) << "\n";
+		// 99th percentile 
+		// n=4 with 50 tries, ~530 - ~560
+		// n=5 with 50 tries, ~850 - ~820
+		// n=6 with 50 tries, ~2580 - ~2740 90th ~980 80th ~470
+		// n=7 with 50 tries, ~
 	}
 
 	void run_parameter_test(I depth, F fac_scale, F max_scale, F epsilon){
@@ -398,9 +506,9 @@ int main(int arg_count, char *arg_vector[]){
 	app.generate_points();
 	I successes = 0;
 	app.randomize_points();
-	//app.run_perf_test(n_tests, test_depth, steps);
-
-	app.run_parameter_test(test_depth, 0.05, 0.05, 0.01);
+	app.run_perf_test(n_tests, test_depth, steps);
+	//app.run_parameter_test_2(test_depth, n_tests, steps);
+	//app.run_parameter_test(test_depth, 0.05, 0.05, 0.01);
 	
 
 	
